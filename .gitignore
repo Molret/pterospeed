@@ -6,3 +6,12 @@ docker-compose.local.yml
 .pterospeed/
 *.log
 .DS_Store
+.claude/
+.agents/
+Arix Theme v2.0.7/
+PloxHost-Pterodactyl-Custom-develop 2/
+ploxhost-panel-v2-main/
+pyrodactyl-main/
+react-doctor-main/
+unlighthouse-main/
+unlighthouse-cli-*.tgz

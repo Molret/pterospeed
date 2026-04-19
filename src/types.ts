@@ -81,6 +81,7 @@ export interface AuditScores {
 export interface AuditResult {
     url: string;
     strategy: 'mobile' | 'desktop';
+    provider?: 'unlighthouse' | 'pagespeed';
     scores: AuditScores;
     audits: AuditItem[];
     fetchTime: string;
@@ -98,4 +99,5 @@ export interface ReportData {
 export interface AuditOptions {
     strategy: 'mobile' | 'desktop' | 'both';
     apiKey?: string;
+    rootDir?: string;
 }

@@ -64,7 +64,6 @@ program
     .argument('[url]', 'panel URL to audit (auto-detected from .env if omitted)')
     .option('--path <path>', 'project path for .env auto-detection', '.')
     .option('--strategy <strategy>', 'mobile, desktop, or both', 'desktop')
-    .option('--key <key>', 'Google PageSpeed API key (or set PAGESPEED_KEY env var)')
     .action(async (url, options) => {
         await runAuditCmd(url, options);
     });
@@ -244,7 +243,7 @@ async function clearWebpackCache(project: ProjectContext): Promise<void> {
 
 async function runAuditCmd(
     urlArg: string | undefined,
-    options: { path: string; strategy: string; key?: string },
+    options: { path: string; strategy: string },
 ): Promise<void> {
     console.log(title(pkg.version));
 
@@ -267,26 +266,20 @@ async function runAuditCmd(
         : options.strategy === 'mobile' ? 'mobile'
         : 'desktop';
 
-    const apiKey = options.key ?? process.env['PAGESPEED_KEY'];
-
     console.log('');
-    console.log(chalk.cyan(`Running PageSpeed audit (${strategy})...`));
-    console.log(chalk.dim('  This may take 10-30 seconds.'));
+    console.log(chalk.cyan(`Running site audit (${strategy})...`));
+    console.log(chalk.dim('  This may take 10-60 seconds.'));
     console.log('');
 
-    const results = await runAudit(url, { strategy, apiKey });
+    const results = await runAudit(url, { strategy, rootDir });
 
-    for (const line of printAudit(results)) {
-        console.log(line);
-    }
-
-    // Build report URL
     const projectName = await detectProjectName(rootDir);
     const reportData = buildReportData(projectName, results[0]);
     const reportUrl = buildReportUrl(reportData);
 
-    console.log('');
-    console.log(chalk.dim(`Full report → ${chalk.white(reportUrl)}`));
+    for (const line of printAudit(results, reportUrl)) {
+        console.log(line);
+    }
 }
 
 async function detectProjectName(rootDir: string): Promise<string> {

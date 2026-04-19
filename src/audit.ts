@@ -1,22 +1,7 @@
 import fs from 'fs-extra';
 import path from 'node:path';
+import { execa } from 'execa';
 import type { AuditItem, AuditOptions, AuditResult, ReportData } from './types';
-
-const PAGESPEED_API = 'https://www.googleapis.com/pagespeedonline/v5/runPagespeed';
-
-// Audits most relevant to Pterodactyl/Laravel panels
-const PTERODACTYL_AUDIT_IDS = [
-    'server-response-time',       // TTFB — Laravel boot time
-    'render-blocking-resources',  // webpack bundle blocking render
-    'uses-text-compression',      // gzip/brotli on assets
-    'uses-long-cache-ttl',        // cache headers on static files
-    'total-byte-weight',          // total transfer size
-    'bootup-time',                // JS execution time
-    'unused-javascript',          // tree-shaking quality
-    'unused-css-rules',           // CSS purging
-    'dom-size',                   // React component tree size
-    'uses-optimized-images',      // image optimization
-];
 
 export async function detectPanelUrl(rootDir: string): Promise<string | undefined> {
     const envPath = path.join(rootDir, '.env');
@@ -34,68 +19,158 @@ export async function runAudit(url: string, options: AuditOptions): Promise<Audi
         options.strategy === 'both' ? ['mobile', 'desktop'] : [options.strategy];
 
     const results: AuditResult[] = [];
+    const rootDir = options.rootDir ?? process.cwd();
 
     for (const strategy of strategies) {
-        results.push(await fetchAudit(url, strategy, options.apiKey));
+        results.push(await runUnlighthouseAudit(rootDir, url, strategy));
     }
 
     return results;
 }
 
-async function fetchAudit(url: string, strategy: 'mobile' | 'desktop', apiKey?: string): Promise<AuditResult> {
-    const params = new URLSearchParams({ url, strategy });
-    if (apiKey) params.set('key', apiKey);
+async function runUnlighthouseAudit(
+    rootDir: string,
+    url: string,
+    strategy: 'mobile' | 'desktop',
+): Promise<AuditResult> {
+    const outputPath = path.join(rootDir, '.pterospeed', 'audit', strategy);
+    await fs.ensureDir(outputPath);
+    await fs.remove(path.join(outputPath, 'ci-result.json'));
+    const configPath = await writeUnlighthouseConfig(rootDir, outputPath, url, strategy);
 
-    const endpoint = `${PAGESPEED_API}?${params}`;
-    const res = await fetch(endpoint);
+    const args = [
+        '-y',
+        '--package',
+        '@unlighthouse/cli',
+        '--package',
+        'puppeteer',
+        'unlighthouse-ci',
+        '--root',
+        rootDir,
+        '--config-file',
+        configPath,
+    ];
 
-    if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        if (res.status === 400) {
-            throw new Error(
-                `PageSpeed API could not reach "${url}". Make sure the panel is publicly accessible.`,
-            );
-        }
-        throw new Error(`PageSpeed API error ${res.status}: ${body.slice(0, 200)}`);
+    try {
+        await execa('npx', args, {
+            cwd: rootDir,
+            stdout: 'pipe',
+            stderr: 'pipe',
+            reject: true,
+            timeout: 5 * 60 * 1000,
+        });
+    } catch (error: any) {
+        const stderr = [error?.stdout, error?.stderr].filter(Boolean).join('\n').trim();
+        throw new Error(
+            `Unlighthouse audit failed for "${url}". ${
+                stderr || 'Make sure the panel is reachable and Puppeteer can start Chromium.'
+            }`,
+        );
     }
 
-    const data = (await res.json()) as any;
-    return parsePageSpeedResponse(data, strategy);
+    const reportPath = path.join(outputPath, 'ci-result.json');
+    if (!(await fs.pathExists(reportPath))) {
+        throw new Error(`Unlighthouse did not produce ${reportPath}.`);
+    }
+
+    const data = await fs.readJson(reportPath);
+    return parseUnlighthouseResponse(data, url, strategy);
 }
 
-function parsePageSpeedResponse(data: any, strategy: 'mobile' | 'desktop'): AuditResult {
-    const cats = data?.lighthouseResult?.categories ?? {};
-    const rawAudits = data?.lighthouseResult?.audits ?? {};
+function parseUnlighthouseResponse(
+    data: any,
+    url: string,
+    strategy: 'mobile' | 'desktop',
+): AuditResult {
+    const summary = data?.summary ?? {};
+    const categories = summary.categories ?? {};
+    const metrics = summary.metrics ?? {};
 
     const scores = {
-        performance: toScore(cats.performance?.score),
-        accessibility: toScore(cats.accessibility?.score),
-        bestPractices: toScore(cats['best-practices']?.score),
-        seo: toScore(cats.seo?.score),
+        performance: toScore(categories.performance?.averageScore),
+        accessibility: toScore(categories.accessibility?.averageScore),
+        bestPractices: toScore(categories['best-practices']?.averageScore),
+        seo: toScore(categories.seo?.averageScore),
     };
 
-    const audits: AuditItem[] = PTERODACTYL_AUDIT_IDS
-        .filter((id) => rawAudits[id])
-        .map((id) => ({
-            id,
-            title: rawAudits[id].title as string,
-            score: rawAudits[id].score as number | null,
-            value: rawAudits[id].displayValue as string | undefined,
-        }))
-        .filter((a) => a.score !== null && a.score < 0.9); // only show issues
+    const metricItems: AuditItem[] = [
+        metricItem('largest-contentful-paint', 'Largest Contentful Paint', metrics['largest-contentful-paint']?.averageNumericValue, 'ms', 2500),
+        metricItem('first-contentful-paint', 'First Contentful Paint', metrics['first-contentful-paint']?.averageNumericValue, 'ms', 1800),
+        metricItem('total-blocking-time', 'Total Blocking Time', metrics['total-blocking-time']?.averageNumericValue, 'ms', 200),
+        metricItem('cumulative-layout-shift', 'Cumulative Layout Shift', metrics['cumulative-layout-shift']?.averageNumericValue, '', 0.1),
+        metricItem('interactive', 'Time to Interactive', metrics['interactive']?.averageNumericValue, 'ms', 3800),
+    ].filter((item): item is AuditItem => Boolean(item));
 
     return {
-        url: data.id ?? data.lighthouseResult?.finalUrl ?? '',
+        url,
         strategy,
+        provider: 'unlighthouse',
         scores,
-        audits,
-        fetchTime: data.lighthouseResult?.fetchTime ?? new Date().toISOString(),
+        audits: metricItems,
+        fetchTime: new Date().toISOString(),
     };
 }
 
 function toScore(raw: number | null | undefined): number {
     if (raw == null) return 0;
     return Math.round(raw * 100);
+}
+
+function metricItem(
+    id: string,
+    title: string,
+    numericValue: number | undefined,
+    unit: string,
+    goodThreshold: number,
+): AuditItem | undefined {
+    if (typeof numericValue !== 'number') {
+        return undefined;
+    }
+
+    const normalized = unit === 'ms' ? Math.round(numericValue) : Number(numericValue.toFixed(3));
+    const displayValue = unit ? `${normalized}${unit}` : `${normalized}`;
+    const score = numericValue <= goodThreshold ? 1 : 0;
+
+    return {
+        id,
+        title,
+        score,
+        value: displayValue,
+    };
+}
+
+async function writeUnlighthouseConfig(
+    rootDir: string,
+    outputPath: string,
+    url: string,
+    strategy: 'mobile' | 'desktop',
+): Promise<string> {
+    const parsed = new URL(url);
+    const site = parsed.origin;
+    const routePath = `${parsed.pathname || '/'}${parsed.search || ''}`;
+    const configPath = path.join(outputPath, 'unlighthouse.config.mjs');
+    const configSource = [
+        'export default {',
+        `  site: ${JSON.stringify(site)},`,
+        `  root: ${JSON.stringify(rootDir)},`,
+        `  outputPath: ${JSON.stringify(outputPath)},`,
+        `  urls: [${JSON.stringify(routePath)}],`,
+        `  scanner: {`,
+        `    device: ${JSON.stringify(strategy)},`,
+        '    samples: 1,',
+        '    dynamicSampling: false,',
+        '    sitemap: false,',
+        '    robotsTxt: false,',
+        '  },',
+        '  ci: {',
+        "    reporter: 'jsonExpanded',",
+        '  },',
+        '};',
+        '',
+    ].join('\n');
+
+    await fs.writeFile(configPath, configSource, 'utf8');
+    return configPath;
 }
 
 export function encodeReport(data: ReportData): string {
