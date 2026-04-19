@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import path from 'node:path';
 import type { AnalysisResult, BenchmarkResult, Finding, OptimizeResult, ProjectContext } from './types';
 
-const GITHUB_URL = 'https://github.com/pterospeed/pterospeed';
+const GITHUB_URL = 'https://github.com/Molret/pterospeed';
 
 export function title(version: string): string {
     return chalk.bold.white(`pterospeed v${version}`);
