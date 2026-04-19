@@ -1,0 +1,41 @@
+{
+  "name": "pterospeed",
+  "version": "0.1.0",
+  "description": "CLI to analyze and optimize Pterodactyl panel build performance.",
+  "license": "MIT",
+  "bin": {
+    "pterospeed": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": [
+    "pterodactyl",
+    "webpack",
+    "yarn",
+    "build",
+    "performance",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.28.0",
+    "boxen": "^8.0.1",
+    "chalk": "^5.4.1",
+    "commander": "^14.0.0",
+    "diff": "^8.0.2",
+    "execa": "^9.6.0",
+    "fs-extra": "^11.3.0",
+    "recast": "^0.23.11"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  }
+}

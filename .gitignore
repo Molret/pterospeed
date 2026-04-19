@@ -1,0 +1,8 @@
+node_modules/
+dist/
+example-panel/
+docker/
+docker-compose.local.yml
+.pterospeed/
+*.log
+.DS_Store
