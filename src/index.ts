@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import pkg from '../package.json';
 import { analyzeProject, optimizeProject, revertProject } from './analyze';
-import { buildReportData, buildReportUrl, detectPanelUrl, runAudit } from './audit';
+import { buildReportData, buildReportUrl, detectPanelUrl, runAudit, writeReportFile } from './audit';
 import { loadProject } from './project';
 import { printAnalysis, printAudit, printBenchmark, printDiff, printOptimize, printProject, title } from './ui';
 import type { BenchmarkResult, Preset, ProjectContext } from './types';
@@ -223,6 +223,7 @@ async function runScript(project: ProjectContext, label: string, scriptName: str
             cwd: project.rootDir,
             stdout: 'pipe',
             stderr: 'pipe',
+            env: buildScriptEnv(project),
         });
     } catch (error: any) {
         const stderr = [error?.stdout, error?.stderr].filter(Boolean).join('\n').trim();
@@ -234,6 +235,17 @@ async function runScript(project: ProjectContext, label: string, scriptName: str
         command: `${command} ${args.join(' ')}`,
         durationMs: Date.now() - startedAt,
     };
+}
+
+function buildScriptEnv(project: ProjectContext): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    if (project.webpackMajor < 5) {
+        const current = env.NODE_OPTIONS || '';
+        if (!current.includes('--openssl-legacy-provider')) {
+            env.NODE_OPTIONS = `${current} --openssl-legacy-provider`.trim();
+        }
+    }
+    return env;
 }
 
 async function clearWebpackCache(project: ProjectContext): Promise<void> {
@@ -284,8 +296,9 @@ async function runAuditCmd(
     const projectName = await detectProjectName(rootDir);
     const reportData = buildReportData(projectName, results[0]);
     const reportUrl = buildReportUrl(reportData);
+    const reportPath = await writeReportFile(rootDir, 'audit', reportData);
 
-    for (const line of printAudit(results, reportUrl)) {
+    for (const line of printAudit(results, reportUrl, reportPath)) {
         console.log(line);
     }
 }

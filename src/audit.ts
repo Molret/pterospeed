@@ -3,6 +3,8 @@ import path from 'node:path';
 import { execa } from 'execa';
 import type { AuditItem, AuditOptions, AuditResult, ReportData } from './types';
 
+const REPORT_BASE_URL = 'https://pterospeed.me/r';
+
 export async function detectPanelUrl(rootDir: string): Promise<string | undefined> {
     const envPath = path.join(rootDir, '.env');
     if (!(await fs.pathExists(envPath))) return undefined;
@@ -173,16 +175,6 @@ async function writeUnlighthouseConfig(
     return configPath;
 }
 
-export function encodeReport(data: ReportData): string {
-    return Buffer.from(JSON.stringify(data), 'utf8').toString('base64url');
-}
-
-export function buildReportUrl(data: ReportData): string {
-    const id = Math.random().toString(36).slice(2, 8);
-    const encoded = encodeReport(data);
-    return `https://pterospeed.me/r/${id}?d=${encoded}`;
-}
-
 export function buildReportData(
     project: string,
     auditResult?: AuditResult,
@@ -196,4 +188,21 @@ export function buildReportData(
         audit: auditResult,
         build,
     };
+}
+
+export function encodeReport(data: ReportData): string {
+    return Buffer.from(JSON.stringify(data), 'utf8').toString('base64url');
+}
+
+export function buildReportUrl(data: ReportData): string {
+    return `${REPORT_BASE_URL}?d=${encodeReport(data)}`;
+}
+
+export async function writeReportFile(rootDir: string, kind: string, data: ReportData): Promise<string> {
+    const reportDir = path.join(rootDir, '.pterospeed', 'reports');
+    await fs.ensureDir(reportDir);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const reportPath = path.join(reportDir, `${kind}-${stamp}.json`);
+    await fs.writeJson(reportPath, data, { spaces: 2 });
+    return reportPath;
 }

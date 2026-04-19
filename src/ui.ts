@@ -114,10 +114,6 @@ export function printOptimize(result: OptimizeResult, project: ProjectContext): 
         lines.push('');
         const gainLines = result.gainSummary.map((g) => `  ${chalk.green('›')} ${g}`).join('\n');
         const benchmarkHint = chalk.dim(`\nRun ${chalk.white('pterospeed benchmark')} to measure your real gains.`);
-        const projectName = encodeURIComponent(project.packageJson?.name ?? 'pterodactyl-panel');
-        const encodedGains = encodeURIComponent(result.gainSummary.join('|'));
-        const shareUrl = `https://pterospeed.me/r?p=${projectName}&a=${result.applied.length}&g=${encodedGains}`;
-        const shareHint = chalk.dim(`\nShare → ${chalk.white(shareUrl)}`);
         const starLine = `\n${chalk.yellow('⭐')} Helped you? Star us → ${chalk.cyan(GITHUB_URL)}`;
 
         lines.push(
@@ -127,7 +123,6 @@ export function printOptimize(result: OptimizeResult, project: ProjectContext): 
                     '',
                     gainLines,
                     benchmarkHint,
-                    shareHint,
                     starLine,
                 ].join('\n'),
                 { padding: 1, borderStyle: 'round', borderColor: 'green' },
@@ -211,7 +206,7 @@ export function printFindingList(findings: Finding[]): string[] {
     return findings.map((finding) => `${finding.ok ? chalk.green('✓') : chalk.yellow('⚠')} ${finding.title}`);
 }
 
-export function printAudit(results: AuditResult[], reportUrl?: string): string[] {
+export function printAudit(results: AuditResult[], reportUrl?: string, reportPath?: string): string[] {
     const lines: string[] = [];
 
     for (const result of results) {
@@ -247,13 +242,18 @@ export function printAudit(results: AuditResult[], reportUrl?: string): string[]
         lines.push('');
     }
 
-    if (reportUrl) {
+    if (reportUrl || reportPath) {
+        const details = [
+            reportUrl ? `${chalk.dim('View report →')} ${chalk.white(reportUrl)}` : '',
+            reportPath ? `${chalk.dim('Saved JSON →')} ${chalk.white(reportPath)}` : '',
+        ].filter(Boolean).join('\n');
+
         lines.push(
             boxen(
                 [
                     `${chalk.bold.cyan('Panel audit complete!')}`,
                     '',
-                    `${chalk.dim('View full report →')} ${chalk.white(reportUrl)}`,
+                    details,
                     chalk.dim(`\nRun ${chalk.white('pterospeed optimize')} to fix build performance too.`),
                     `\n${chalk.yellow('⭐')} Helped you? Star us → ${chalk.cyan(GITHUB_URL)}`,
                 ].join('\n'),
