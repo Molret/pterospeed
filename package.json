@@ -49,6 +49,7 @@
     "diff": "^8.0.2",
     "execa": "^9.6.0",
     "fs-extra": "^11.3.0",
+    "ora": "^9.3.0",
     "recast": "^0.23.11"
   },
   "devDependencies": {

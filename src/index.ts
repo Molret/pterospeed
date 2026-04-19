@@ -12,7 +12,7 @@ import { analyzeProject, optimizeProject, revertProject } from './analyze';
 import { buildReportData, buildReportUrl, detectPanelUrl, runAudit, writeReportFile } from './audit';
 import { loadProject } from './project';
 import { printAnalysis, printAudit, printBenchmark, printDiff, printOptimize, printProject, title } from './ui';
-import type { BenchmarkResult, Preset, ProjectContext } from './types';
+import type { AuditResult, BenchmarkResult, Preset, ProjectContext } from './types';
 
 const program = new Command();
 
@@ -316,34 +316,64 @@ async function runAuditCmd(
     urlArg: string | undefined,
     options: { path: string; strategy: string },
 ): Promise<void> {
+    const { default: ora } = await import('ora');
+
     console.log(title(pkg.version));
+    console.log('');
 
     const rootDir = path.resolve(options.path);
     let url = urlArg;
 
+    // Step 1: URL detection
     if (!url) {
-        console.log(chalk.cyan('Auto-detecting panel URL from .env...'));
+        const spinner = ora('Detecting panel URL from .env…').start();
         url = await detectPanelUrl(rootDir);
         if (!url) {
+            spinner.fail('APP_URL not found in .env');
             throw new Error(
                 'No URL provided and APP_URL not found in .env.\n' +
                 'Usage: pterospeed audit https://panel.yourhost.com',
             );
         }
-        console.log(`${chalk.green('✔')} Found APP_URL: ${chalk.dim(url)}`);
+        spinner.succeed(`Panel URL: ${chalk.dim(url)}`);
+    } else {
+        console.log(`${chalk.green('✔')} Panel URL: ${chalk.dim(url)}`);
     }
 
+    // Step 2: Strategy
     const strategy = options.strategy === 'both' ? 'both'
         : options.strategy === 'mobile' ? 'mobile'
         : 'desktop';
-
-    console.log('');
-    console.log(chalk.cyan(`Running site audit (${strategy})...`));
-    console.log(chalk.dim('  This may take 10-60 seconds.'));
+    console.log(`${chalk.green('✔')} Strategy:  ${chalk.dim(strategy)}`);
     console.log('');
 
-    const results = await runAudit(url, { strategy, rootDir });
+    // Step 3: Run audit — spinner with elapsed timer (Unlighthouse takes 1-3 min)
+    const auditSpinner = ora({
+        text: `Running Lighthouse audit (${strategy}) — may take 1–3 minutes…`,
+        color: 'cyan',
+    }).start();
 
+    const startedAt = Date.now();
+    const ticker = setInterval(() => {
+        const secs = Math.round((Date.now() - startedAt) / 1000);
+        auditSpinner.text = `Running Lighthouse audit (${strategy}) — ${secs}s elapsed…`;
+    }, 3000);
+
+    let results: AuditResult[];
+    try {
+        results = await runAudit(url, { strategy, rootDir });
+    } catch (err: any) {
+        clearInterval(ticker);
+        auditSpinner.fail(`Audit failed: ${err.message}`);
+        throw err;
+    }
+
+    clearInterval(ticker);
+    const elapsed = formatElapsed(Date.now() - startedAt);
+    auditSpinner.succeed(`Audit complete ${chalk.dim(`(${elapsed})`)}`);
+    console.log('');
+
+    // Step 4: Generate report + print
     const projectName = await detectProjectName(rootDir);
     const reportData = buildReportData(projectName, results[0]);
     const reportUrl = buildReportUrl(reportData);
@@ -352,6 +382,13 @@ async function runAuditCmd(
     for (const line of printAudit(results, reportUrl, reportPath)) {
         console.log(line);
     }
+}
+
+function formatElapsed(ms: number): string {
+    if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+    const m = Math.floor(ms / 60_000);
+    const s = Math.round((ms % 60_000) / 1000);
+    return `${m}m ${s}s`;
 }
 
 async function buildOptimizeShare(

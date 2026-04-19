@@ -219,7 +219,10 @@ export function printAudit(results: AuditResult[], reportUrl?: string, reportPat
     const lines: string[] = [];
 
     for (const result of results) {
-        lines.push(`${chalk.green('✔')} ${chalk.dim(result.strategy.toUpperCase())} — ${chalk.dim(result.url)}`);
+        // ── DESKTOP ──────────────────────────────────────
+        const stratLabel = result.strategy.toUpperCase();
+        const sep = '─'.repeat(Math.max(0, 50 - stratLabel.length - 4));
+        lines.push(chalk.dim(`── ${stratLabel} ${sep}`));
         lines.push('');
 
         const { performance: perf, accessibility: a11y, bestPractices: bp, seo } = result.scores;
@@ -227,49 +230,89 @@ export function printAudit(results: AuditResult[], reportUrl?: string, reportPat
         const scoreRow = (label: string, score: number): string => {
             const color = score >= 90 ? chalk.green : score >= 50 ? chalk.yellow : chalk.red;
             const bar = buildBar(score, 20);
-            return `  ${chalk.dim(label.padEnd(18))} ${color(bar)} ${color(String(score).padStart(3))}/100`;
+            return `  ${label.padEnd(16)} ${color(bar)}  ${color(String(score).padStart(3))} / 100`;
         };
 
         lines.push(scoreRow('Performance', perf));
         lines.push(scoreRow('Accessibility', a11y));
         lines.push(scoreRow('Best Practices', bp));
         lines.push(scoreRow('SEO', seo));
+        lines.push('');
 
+        // Core Web Vitals — sorted: failing first
         if (result.audits.length) {
-            lines.push('');
-            lines.push(chalk.dim('  Issues found:'));
-            for (const audit of result.audits) {
-                const icon = audit.score === 0 ? chalk.red('✗') : chalk.yellow('⚠');
+            lines.push(chalk.dim('  Core Web Vitals:'));
+            const sorted = [...result.audits].sort((a, b) => (a.score ?? 1) - (b.score ?? 1));
+            for (const audit of sorted) {
+                const ok = audit.score !== 0 && audit.score !== null;
+                const icon = ok ? chalk.green('✓') : chalk.red('✗');
+                const label = ok ? chalk.dim(audit.title) : audit.title;
                 const val = audit.value ? chalk.dim(` — ${audit.value}`) : '';
-                lines.push(`  ${icon} ${audit.title}${val}`);
+                lines.push(`  ${icon} ${label}${val}`);
             }
         } else {
-            lines.push('');
-            lines.push(chalk.green('  ✓ No major issues found.'));
+            lines.push(chalk.green('  ✓ All Core Web Vitals passing.'));
         }
 
         lines.push('');
+
+        // ASCII face based on perf score
+        for (const l of perfFace(perf)) {
+            lines.push(l);
+        }
+        lines.push('');
     }
 
-    if (reportUrl || reportPath) {
-        const details = [
-            reportUrl ? `${chalk.dim('View report →')} ${chalk.white(reportUrl)}` : '',
-            reportPath ? `${chalk.dim('Saved JSON →')} ${chalk.white(reportPath)}` : '',
-        ].filter(Boolean).join('\n');
+    // Summary boxen
+    const first = results[0];
+    if (first && (reportUrl || reportPath)) {
+        const perf = first.scores.performance;
+        const perfColor = perf >= 90 ? chalk.green : perf >= 50 ? chalk.yellow : chalk.red;
+        const perfLabel = perf >= 90 ? 'Great' : perf >= 50 ? 'Needs work' : 'Critical';
+        const bar = buildBar(perf, 32);
+
+        const boxContent = [
+            chalk.bold.cyan('Panel audit complete!'),
+            '',
+            `${chalk.dim('Performance:')} ${perfColor(`${perf} / 100`)}  ${chalk.dim(perfLabel)}`,
+            `${perfColor(bar)}`,
+            '',
+            reportUrl ? `${chalk.dim('Full report  →')} ${chalk.white(reportUrl)}` : '',
+            reportPath ? chalk.dim(`Local JSON   → ${path.relative(process.cwd(), reportPath)}`) : '',
+            '',
+            chalk.dim(`Run ${chalk.white('pterospeed optimize')} to fix build performance too.`),
+            `${chalk.yellow('⭐')} Helped you? Star us → ${chalk.cyan(GITHUB_URL)}`,
+        ].filter((l) => l !== undefined).join('\n');
 
         lines.push(
-            boxen(
-                [
-                    `${chalk.bold.cyan('Panel audit complete!')}`,
-                    '',
-                    details,
-                    chalk.dim(`\nRun ${chalk.white('pterospeed optimize')} to fix build performance too.`),
-                    `\n${chalk.yellow('⭐')} Helped you? Star us → ${chalk.cyan(GITHUB_URL)}`,
-                ].join('\n'),
-                { padding: 1, borderStyle: 'round', borderColor: 'cyan' },
-            ),
+            boxen(boxContent, { padding: 1, borderStyle: 'round', borderColor: 'cyan' }),
         );
     }
 
     return lines;
+}
+
+function perfFace(score: number): string[] {
+    if (score >= 90) {
+        return [
+            chalk.dim('  ┌─────┐'),
+            chalk.dim('  │ ') + chalk.green('◠ ◠') + chalk.dim(' │'),
+            chalk.dim('  │  ') + chalk.green('▽') + chalk.dim('  │'),
+            chalk.dim('  └─────┘'),
+        ];
+    }
+    if (score >= 50) {
+        return [
+            chalk.dim('  ┌─────┐'),
+            chalk.dim('  │ ') + chalk.yellow('• •') + chalk.dim(' │'),
+            chalk.dim('  │  ') + chalk.yellow('─') + chalk.dim('  │'),
+            chalk.dim('  └─────┘'),
+        ];
+    }
+    return [
+        chalk.dim('  ┌─────┐'),
+        chalk.dim('  │ ') + chalk.red('x x') + chalk.dim(' │'),
+        chalk.dim('  │  ') + chalk.red('▽') + chalk.dim('  │'),
+        chalk.dim('  └─────┘'),
+    ];
 }
