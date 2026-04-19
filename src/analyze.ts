@@ -62,6 +62,10 @@ function computeEstimatedGain(findings: Finding[]): string {
         parts.push('better CPU utilization on multi-core hosts');
     }
 
+    if (notOk('always-minimize')) {
+        parts.push('dev builds skip minification (~30-60s saved per dev build)');
+    }
+
     if (!parts.length) {
         return 'config already well optimized';
     }
@@ -73,11 +77,12 @@ export async function analyzeProject(project: ProjectContext): Promise<AnalysisR
     const bundle = await parseWebpack(project.webpackConfigPath);
     const findings: Finding[] = [];
 
-    findings.push(checkFilesystemCache(bundle.configObject));
+    findings.push(checkFilesystemCache(bundle.configObject, project.webpackMajor));
     findings.push(checkBabelLoaderCache(bundle.configObject));
     findings.push(checkSourceMapLoader(bundle.configObject));
     findings.push(checkParallelism(bundle.configObject));
     findings.push(checkTerserMinifier(bundle.configObject));
+    findings.push(checkAlwaysMinimize(bundle.configObject));
 
     const penalties = findings.reduce((sum, finding) => {
         if (finding.ok) {
@@ -112,8 +117,12 @@ export async function optimizeProject(project: ProjectContext, options: Optimize
     const skipped: string[] = [];
     let needsInstall = false;
 
-    if (ensureFilesystemCache(bundle.configObject)) {
+    if (ensureFilesystemCache(bundle.configObject, project.webpackMajor)) {
         applied.push('Switched webpack cache to filesystem.');
+    }
+
+    if (ensureConditionalMinimize(bundle.configObject)) {
+        applied.push('Changed minimize: true → minimize: isProduction (skips minification in dev).');
     }
 
     const babelResult = ensureBabelLoaderCache(bundle.configObject);
@@ -234,6 +243,10 @@ function buildGainSummary(applied: string[]): string[] {
         summary.push('Parallelism: full CPU utilization enabled');
     }
 
+    if (has('minimize: isProduction') || has('minimize: true')) {
+        summary.push('Dev builds: skip minification (~30-60s saved)');
+    }
+
     return summary;
 }
 
@@ -303,17 +316,42 @@ function findModuleExportsObject(ast: recast.types.ASTNode): any | undefined {
     return found;
 }
 
-function checkFilesystemCache(configObject: any): Finding {
+function nodeHasFilesystemCache(node: any): boolean {
+    if (n.ObjectExpression.check(node)) {
+        return isPropertyValueString(node, 'type', 'filesystem');
+    }
+    if (n.ConditionalExpression.check(node)) {
+        return nodeHasFilesystemCache(node.consequent) || nodeHasFilesystemCache(node.alternate);
+    }
+    return false;
+}
+
+function checkFilesystemCache(configObject: any, webpackMajor: number): Finding {
     const cacheProp = getObjectProperty(configObject, 'cache');
-    if (cacheProp && n.ObjectExpression.check(cacheProp.value) && isPropertyValueString(cacheProp.value, 'type', 'filesystem')) {
-        return {
-            id: 'filesystem-cache',
-            title: 'Filesystem cache enabled',
-            detail: 'Repeated builds can reuse persisted webpack cache.',
-            impact: 'high',
-            fixable: true,
-            ok: true,
-        };
+
+    if (cacheProp) {
+        if (nodeHasFilesystemCache(cacheProp.value)) {
+            return {
+                id: 'filesystem-cache',
+                title: 'Filesystem cache enabled',
+                detail: 'Repeated builds can reuse persisted webpack cache.',
+                impact: 'high',
+                fixable: true,
+                ok: true,
+            };
+        }
+
+        // webpack 4: cache: true means persistent filesystem cache (different from webpack 5)
+        if (webpackMajor <= 4 && n.BooleanLiteral.check(cacheProp.value) && cacheProp.value.value === true) {
+            return {
+                id: 'filesystem-cache',
+                title: 'Filesystem cache enabled (webpack 4)',
+                detail: 'cache: true in webpack 4 persists to disk. Upgrade to webpack 5 for more control.',
+                impact: 'high',
+                fixable: false,
+                ok: true,
+            };
+        }
     }
 
     return {
@@ -425,9 +463,9 @@ function checkParallelism(configObject: any): Finding {
 }
 
 function checkTerserMinifier(configObject: any): Finding {
-    const minimizer = getMinimizerArray(configObject);
-    const hasTerser = minimizer?.elements?.some(
-        (element: any) => element && n.NewExpression.check(element) && getCalleeName(element.callee) === 'TerserPlugin',
+    const elements = getMinimizerElements(configObject);
+    const hasTerser = elements.some(
+        (el: any) => el && n.NewExpression.check(el) && getCalleeName(el.callee) === 'TerserPlugin',
     );
 
     if (!hasTerser) {
@@ -451,9 +489,41 @@ function checkTerserMinifier(configObject: any): Finding {
     };
 }
 
-function ensureFilesystemCache(configObject: any): boolean {
-    const nextValue = parseObjectExpression("{ type: 'filesystem', buildDependencies: { config: [__filename] } }");
+function checkAlwaysMinimize(configObject: any): Finding {
+    const optimization = getObjectProperty(configObject, 'optimization');
+    if (!optimization || !n.ObjectExpression.check(optimization.value)) {
+        return { id: 'always-minimize', title: 'minimize is conditional', detail: '', impact: 'medium', fixable: false, ok: true };
+    }
 
+    const minimize = getObjectProperty(optimization.value, 'minimize');
+    if (minimize && n.BooleanLiteral.check(minimize.value) && minimize.value.value === true) {
+        return {
+            id: 'always-minimize',
+            title: 'minimize: true always runs (even in dev)',
+            detail: 'Minification in dev builds wastes 30-60s per build. Use minimize: isProduction.',
+            impact: 'medium',
+            fixable: true,
+            ok: false,
+        };
+    }
+
+    return {
+        id: 'always-minimize',
+        title: 'minimize is production-only',
+        detail: 'Dev builds skip minification correctly.',
+        impact: 'medium',
+        fixable: true,
+        ok: true,
+    };
+}
+
+function ensureFilesystemCache(configObject: any, webpackMajor: number): boolean {
+    if (webpackMajor <= 4) return false;
+
+    const cacheProp = getObjectProperty(configObject, 'cache');
+    if (cacheProp && nodeHasFilesystemCache(cacheProp.value)) return false;
+
+    const nextValue = parseObjectExpression("{ type: 'filesystem', buildDependencies: { config: [__filename] } }");
     return upsertObjectProperty(configObject, 'cache', nextValue);
 }
 
@@ -518,23 +588,37 @@ function ensureParallelism(ast: recast.types.ASTNode, configObject: any): boolea
 }
 
 function ensureEsbuildMinifier(ast: recast.types.ASTNode, configObject: any): { changed: boolean; needsInstall: boolean; skipped?: string } {
-    const minimizer = getMinimizerArray(configObject);
-    if (!minimizer || !Array.isArray(minimizer.elements)) {
+    const arrays = collectMinimizerArrays(configObject);
+    if (!arrays.length) {
         return { changed: false, needsInstall: false, skipped: 'No optimization.minimizer array found.' };
     }
 
     let changed = false;
-    for (let index = 0; index < minimizer.elements.length; index += 1) {
-        const element = minimizer.elements[index];
-        if (element && n.NewExpression.check(element) && getCalleeName(element.callee) === 'TerserPlugin') {
-            ensureEsbuildRequire(ast);
-            removeTerserRequire(ast);
-            minimizer.elements[index] = parseExpression("new EsbuildPlugin({ target: 'es2015' })");
-            changed = true;
+    for (const arr of arrays) {
+        for (let index = 0; index < arr.elements.length; index += 1) {
+            const element = arr.elements[index];
+            if (element && n.NewExpression.check(element) && getCalleeName(element.callee) === 'TerserPlugin') {
+                ensureEsbuildRequire(ast);
+                removeTerserRequire(ast);
+                arr.elements[index] = parseExpression("new EsbuildPlugin({ target: 'es2015' })");
+                changed = true;
+            }
         }
     }
 
     return { changed, needsInstall: changed };
+}
+
+function ensureConditionalMinimize(configObject: any): boolean {
+    const optimization = getObjectProperty(configObject, 'optimization');
+    if (!optimization || !n.ObjectExpression.check(optimization.value)) return false;
+
+    const minimize = getObjectProperty(optimization.value, 'minimize');
+    if (!minimize || !n.BooleanLiteral.check(minimize.value) || minimize.value.value !== true) return false;
+
+    // Use isProduction if it exists in scope (standard in all Pterodactyl configs), else ternary
+    minimize.value = parseExpression('isProduction');
+    return true;
 }
 
 function ensureEsbuildDependency(packageJson: Record<string, any>): { packageJson: Record<string, any>; changed: boolean } {
@@ -637,18 +721,46 @@ function ruleHasLoader(rule: any, loaderName: string): boolean {
     return false;
 }
 
-function getMinimizerArray(configObject: any): any | undefined {
+function getMinimizerElements(configObject: any): any[] {
     const optimization = getObjectProperty(configObject, 'optimization');
-    if (!optimization || !n.ObjectExpression.check(optimization.value)) {
-        return undefined;
-    }
+    if (!optimization || !n.ObjectExpression.check(optimization.value)) return [];
 
     const minimizer = getObjectProperty(optimization.value, 'minimizer');
-    if (!minimizer || !n.ArrayExpression.check(minimizer.value)) {
-        return undefined;
-    }
+    if (!minimizer) return [];
 
-    return minimizer.value;
+    const elements: any[] = [];
+    collectArrayElementsFromNode(minimizer.value, elements);
+    return elements;
+}
+
+function collectArrayElementsFromNode(node: any, acc: any[]): void {
+    if (n.ArrayExpression.check(node)) {
+        acc.push(...node.elements.filter(Boolean));
+    } else if (n.ConditionalExpression.check(node)) {
+        collectArrayElementsFromNode(node.consequent, acc);
+        collectArrayElementsFromNode(node.alternate, acc);
+    }
+}
+
+function collectMinimizerArrays(configObject: any): any[] {
+    const optimization = getObjectProperty(configObject, 'optimization');
+    if (!optimization || !n.ObjectExpression.check(optimization.value)) return [];
+
+    const minimizer = getObjectProperty(optimization.value, 'minimizer');
+    if (!minimizer) return [];
+
+    const arrays: any[] = [];
+    collectArrayNodesFromNode(minimizer.value, arrays);
+    return arrays;
+}
+
+function collectArrayNodesFromNode(node: any, acc: any[]): void {
+    if (n.ArrayExpression.check(node)) {
+        acc.push(node);
+    } else if (n.ConditionalExpression.check(node)) {
+        collectArrayNodesFromNode(node.consequent, acc);
+        collectArrayNodesFromNode(node.alternate, acc);
+    }
 }
 
 function getObjectProperty(objectExpression: any, name: string): any | undefined {

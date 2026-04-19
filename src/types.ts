@@ -5,7 +5,8 @@ export type FindingId =
     | 'babel-loader-cache'
     | 'source-map-loader-exclude'
     | 'parallelism'
-    | 'terser-minifier';
+    | 'terser-minifier'
+    | 'always-minimize';
 
 export interface ProjectContext {
     rootDir: string;
@@ -16,6 +17,7 @@ export interface ProjectContext {
     packageJson: Record<string, any>;
     composerJson?: Record<string, any>;
     isPterodactyl: boolean;
+    webpackMajor: number;
 }
 
 export interface Finding {

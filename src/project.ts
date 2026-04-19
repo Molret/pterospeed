@@ -12,13 +12,26 @@ export async function loadProject(inputPath?: string): Promise<ProjectContext> {
         throw new Error(`Missing package.json in ${rootDir}`);
     }
 
-    if (!(await fs.pathExists(webpackConfigPath))) {
+    const hasVite =
+        (await fs.pathExists(path.join(rootDir, 'vite.config.ts'))) ||
+        (await fs.pathExists(path.join(rootDir, 'vite.config.js')));
+    const hasWebpack = await fs.pathExists(webpackConfigPath);
+
+    if (hasVite && !hasWebpack) {
+        throw new Error(
+            'This project uses Vite, which is already fast. pterospeed targets webpack-based panels.\n' +
+                'Vite support is on the roadmap for v0.2.',
+        );
+    }
+
+    if (!hasWebpack) {
         throw new Error(`Missing webpack.config.js in ${rootDir}`);
     }
 
     const packageJson = await fs.readJson(packageJsonPath);
     const composerJson = (await fs.pathExists(composerJsonPath)) ? await fs.readJson(composerJsonPath) : undefined;
     const packageManager = detectPackageManager(rootDir, packageJson);
+    const webpackMajor = detectWebpackMajor(packageJson);
 
     const hasResourcesScripts = await fs.pathExists(path.join(rootDir, 'resources', 'scripts'));
     const hasArtisan = await fs.pathExists(path.join(rootDir, 'artisan'));
@@ -40,7 +53,15 @@ export async function loadProject(inputPath?: string): Promise<ProjectContext> {
         packageJson,
         composerJson,
         isPterodactyl,
+        webpackMajor,
     };
+}
+
+function detectWebpackMajor(packageJson: Record<string, any>): number {
+    const all = { ...packageJson?.dependencies, ...packageJson?.devDependencies };
+    const raw = String(all?.webpack ?? '');
+    const match = raw.match(/(\d+)/);
+    return match ? parseInt(match[1], 10) : 5;
 }
 
 function detectPackageManager(rootDir: string, packageJson: Record<string, any>): PackageManager {
