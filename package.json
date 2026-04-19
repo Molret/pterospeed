@@ -1,6 +1,6 @@
 {
   "name": "pterospeed",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI to analyze and optimize Pterodactyl panel build performance.",
   "license": "MIT",
   "author": "Molret",
