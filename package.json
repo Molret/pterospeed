@@ -3,21 +3,40 @@
   "version": "0.1.0",
   "description": "CLI to analyze and optimize Pterodactyl panel build performance.",
   "license": "MIT",
+  "author": "Molret",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Molret/pterospeed.git"
+  },
+  "homepage": "https://github.com/Molret/pterospeed#readme",
+  "bugs": {
+    "url": "https://github.com/Molret/pterospeed/issues"
+  },
   "bin": {
     "pterospeed": "dist/index.js"
   },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "pterodactyl",
+    "pelican",
     "webpack",
-    "yarn",
     "build",
     "performance",
-    "cli"
+    "optimizer",
+    "cli",
+    "esbuild",
+    "laravel"
   ],
   "engines": {
     "node": ">=20"
