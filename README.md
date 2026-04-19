@@ -92,6 +92,7 @@ Before writing anything, it saves a timestamped backup to `.pterospeed/backups/`
 - [ ] `v0.2` — Pelican Panel support
 - [ ] `v0.3` — swap babel-loader for esbuild-loader entirely (aggressive)
 - [ ] `v0.4` — thread-loader support
+- [ ] `v0.5` — `pterospeed migrate-vite`: full webpack → Vite migration with blade template patching, backup, and dry-run
 - [ ] `v1.0` — general webpack optimizer, any project
 
 ---

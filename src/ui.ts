@@ -94,6 +94,10 @@ export function printOptimize(result: OptimizeResult, project: ProjectContext): 
         lines.push('');
         const gainLines = result.gainSummary.map((g) => `  ${chalk.green('›')} ${g}`).join('\n');
         const benchmarkHint = chalk.dim(`\nRun ${chalk.white('pterospeed benchmark')} to measure your real gains.`);
+        const projectName = encodeURIComponent(project.packageJson?.name ?? 'pterodactyl-panel');
+        const encodedGains = encodeURIComponent(result.gainSummary.join('|'));
+        const shareUrl = `https://pterospeed.me/r?p=${projectName}&a=${result.applied.length}&g=${encodedGains}`;
+        const shareHint = chalk.dim(`\nShare → ${chalk.white(shareUrl)}`);
         const starLine = `\n${chalk.yellow('⭐')} Helped you? Star us → ${chalk.cyan(GITHUB_URL)}`;
 
         lines.push(
@@ -103,6 +107,7 @@ export function printOptimize(result: OptimizeResult, project: ProjectContext): 
                     '',
                     gainLines,
                     benchmarkHint,
+                    shareHint,
                     starLine,
                 ].join('\n'),
                 { padding: 1, borderStyle: 'round', borderColor: 'green' },
