@@ -81,6 +81,7 @@ export async function analyzeProject(project: ProjectContext): Promise<AnalysisR
     const bundle = await parseWebpack(project.webpackConfigPath);
     const findings: Finding[] = [];
 
+    findings.push(checkWebpackVersion(project.webpackMajor));
     findings.push(checkFilesystemCache(bundle.configObject, project.webpackMajor));
     findings.push(checkBabelLoaderCache(bundle.configObject));
     findings.push(checkSourceMapLoader(bundle.configObject));
@@ -536,6 +537,28 @@ function checkAlwaysMinimize(configObject: any): Finding {
         impact: 'medium',
         fixable: true,
         ok: true,
+    };
+}
+
+function checkWebpackVersion(webpackMajor: number): Finding {
+    if (webpackMajor >= 5) {
+        return {
+            id: 'webpack-version',
+            title: `webpack ${webpackMajor} detected`,
+            detail: 'webpack 5 supports all pterospeed optimizations.',
+            impact: 'high',
+            fixable: false,
+            ok: true,
+        };
+    }
+
+    return {
+        id: 'webpack-version',
+        title: `webpack ${webpackMajor} detected — upgrade recommended`,
+        detail: 'webpack 4 misses filesystem cache control, better tree-shaking, and asset modules. Most pterospeed fixes require webpack 5.',
+        impact: 'high',
+        fixable: false,
+        ok: false,
     };
 }
 

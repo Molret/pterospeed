@@ -7,7 +7,8 @@ export type FindingId =
     | 'parallelism'
     | 'terser-minifier'
     | 'always-minimize'
-    | 'esbuild-transpile';
+    | 'esbuild-transpile'
+    | 'webpack-version';
 
 export interface ProjectContext {
     rootDir: string;
