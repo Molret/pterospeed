@@ -11,52 +11,72 @@ export function title(version: string): string {
 
 export function printProject(project: ProjectContext): string[] {
     const label = project.isPterodactyl ? chalk.cyan('Pterodactyl Panel') : chalk.dim('Webpack project');
+    const projectName = project.packageJson?.name || path.basename(project.rootDir);
     return [
+        `${chalk.green('✔')} Select project to scan ${chalk.dim('›')} ${projectName}`,
         `${chalk.green('✔')} Detected: ${label}`,
         `${chalk.green('✔')} Root: ${chalk.dim(project.rootDir)}`,
         `${chalk.green('✔')} Config: ${chalk.dim(project.webpackConfigPath)}`,
     ];
 }
 
-export function printAnalysis(result: AnalysisResult): string[] {
+export function printAnalysis(result: AnalysisResult, elapsedMs: number): string[] {
     const lines: string[] = [];
 
     for (const finding of result.findings) {
         const icon = finding.ok ? chalk.green('✓') : chalk.yellow('⚠');
         const impact = finding.ok ? '' : ` ${chalk.dim(`(${finding.impact})`)}`;
         lines.push(`${icon} ${finding.title}${impact}`);
-        lines.push(`  ${chalk.dim(finding.detail)}`);
+        if (!finding.ok) {
+            lines.push(`  ${chalk.dim(finding.detail)}`);
+        }
     }
 
     lines.push('');
 
     const score = result.score;
     const scoreColor = score >= 90 ? chalk.green : score >= 70 ? chalk.yellow : chalk.red;
-    const bar = buildBar(score, 40);
+    const bar = buildBar(score, 32);
     const label = score >= 90 ? 'Great' : score >= 70 ? 'Needs work' : 'Critical';
-
-    const needsAggressive = result.findings.some((f) => f.id === 'terser-minifier' && !f.ok);
-    const aggHint = needsAggressive
-        ? chalk.dim(`\n  Run with ${chalk.white('--preset aggressive')} to also fix production minifier.`)
-        : '';
+    const issueCount = result.findings.filter((f) => !f.ok).length;
+    const highCount = result.findings.filter((f) => !f.ok && f.impact === 'high').length;
+    const mediumCount = result.findings.filter((f) => !f.ok && f.impact === 'medium').length;
+    const lowCount = result.findings.filter((f) => !f.ok && f.impact === 'low').length;
+    const elapsed = formatMs(elapsedMs);
+    const issueLabel = issueCount === 1 ? 'issue' : 'issues';
+    const projectCount = result.project.sourceFileCount > 0 ? `${result.project.sourceFileCount} files` : 'webpack config';
+    const countsLine = [
+        highCount ? chalk.red(`✗ ${highCount} high`) : '',
+        mediumCount ? chalk.yellow(`⚠ ${mediumCount} medium`) : '',
+        lowCount ? chalk.dim(`• ${lowCount} low`) : '',
+    ].filter(Boolean).join(chalk.dim('  '));
+    const footerLine = `${chalk.dim(`${issueCount} ${issueLabel} across ${projectCount} in ${elapsed}`)}`;
+    const optimizeCmd = result.preset === 'aggressive'
+        ? 'pterospeed optimize --preset aggressive'
+        : 'pterospeed optimize';
 
     lines.push(
         boxen(
             [
                 `${chalk.bold('pterospeed')}`,
                 '',
-                `Build Health: ${scoreColor(String(score))} / 100  ${chalk.dim(label)}`,
+                `${scoreColor(String(score).padStart(3))} / 100  ${chalk.dim(label)}`,
                 '',
                 `${scoreColor(bar)}`,
                 '',
-                `${chalk.dim('Estimated gain:')} ${result.estimatedGain}`,
-                aggHint,
+                countsLine || chalk.green('✓ No issues found'),
+                footerLine,
+                '',
+                `${chalk.dim('Best next step:')} ${chalk.white(optimizeCmd)}`,
             ]
-                .filter((l) => l !== undefined)
+                .filter(Boolean)
                 .join('\n'),
             { padding: 1, borderStyle: 'round' },
         ),
     );
+
+    lines.push('');
+    lines.push(chalk.dim(`Estimated gain: ${result.estimatedGain}`));
 
     return lines;
 }

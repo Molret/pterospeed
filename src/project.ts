@@ -36,6 +36,7 @@ export async function loadProject(inputPath?: string): Promise<ProjectContext> {
     const hasResourcesScripts = await fs.pathExists(path.join(rootDir, 'resources', 'scripts'));
     const hasArtisan = await fs.pathExists(path.join(rootDir, 'artisan'));
     const hasLaravel = typeof composerJson?.require?.['laravel/framework'] === 'string';
+    const sourceFileCount = await countSourceFiles(rootDir);
 
     const isPterodactyl =
         packageJson?.name === 'pterodactyl-panel' ||
@@ -54,7 +55,49 @@ export async function loadProject(inputPath?: string): Promise<ProjectContext> {
         composerJson,
         isPterodactyl,
         webpackMajor,
+        sourceFileCount,
     };
+}
+
+async function countSourceFiles(rootDir: string): Promise<number> {
+    const candidates = [
+        path.join(rootDir, 'resources', 'scripts'),
+        path.join(rootDir, 'src'),
+        path.join(rootDir, 'assets'),
+    ];
+    const exts = new Set(['.js', '.jsx', '.ts', '.tsx']);
+    let total = 0;
+
+    for (const candidate of candidates) {
+        if (!(await fs.pathExists(candidate))) {
+            continue;
+        }
+        total += await walkCount(candidate, exts);
+    }
+
+    return total;
+}
+
+async function walkCount(dir: string, exts: Set<string>): Promise<number> {
+    let total = 0;
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name.startsWith('.')) {
+                continue;
+            }
+            total += await walkCount(fullPath, exts);
+            continue;
+        }
+
+        if (exts.has(path.extname(entry.name))) {
+            total += 1;
+        }
+    }
+
+    return total;
 }
 
 function detectWebpackMajor(packageJson: Record<string, any>): number {

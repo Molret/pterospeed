@@ -20,6 +20,7 @@ export interface ProjectContext {
     composerJson?: Record<string, any>;
     isPterodactyl: boolean;
     webpackMajor: number;
+    sourceFileCount: number;
 }
 
 export interface Finding {
@@ -36,6 +37,7 @@ export interface AnalysisResult {
     findings: Finding[];
     score: number;
     estimatedGain: string;
+    preset: Preset;
 }
 
 export interface OptimizeOptions {

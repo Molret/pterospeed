@@ -77,7 +77,7 @@ function computeEstimatedGain(findings: Finding[]): string {
     return parts.join('; ');
 }
 
-export async function analyzeProject(project: ProjectContext): Promise<AnalysisResult> {
+export async function analyzeProject(project: ProjectContext, preset: Preset = 'safe'): Promise<AnalysisResult> {
     const bundle = await parseWebpack(project.webpackConfigPath);
     const findings: Finding[] = [];
 
@@ -114,6 +114,7 @@ export async function analyzeProject(project: ProjectContext): Promise<AnalysisR
         findings,
         score,
         estimatedGain,
+        preset,
     };
 }
 

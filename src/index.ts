@@ -19,19 +19,23 @@ const program = new Command();
 program
     .name('pterospeed')
     .description('Analyze and optimize Pterodactyl panel build performance.')
+    .option('--preset <preset>', 'analyze using safe or aggressive framing', 'safe')
     .version(pkg.version);
 
 program
     .argument('[path]', 'project path', '.')
-    .action(async (projectPath) => {
-        await runAnalyze(projectPath);
+    .action(async (projectPath, command) => {
+        const options = typeof command?.opts === 'function' ? command.opts() : command;
+        await runAnalyze(projectPath, normalizePreset(readPresetArg(options.preset)));
     });
 
 program
     .command('analyze')
     .argument('[path]', 'project path', '.')
-    .action(async (projectPath) => {
-        await runAnalyze(projectPath);
+    .option('--preset <preset>', 'safe or aggressive', 'safe')
+    .action(async (projectPath, command) => {
+        const options = typeof command?.opts === 'function' ? command.opts() : command;
+        await runAnalyze(projectPath, normalizePreset(readPresetArg(options.preset)));
     });
 
 program
@@ -40,8 +44,9 @@ program
     .option('--auto', 'apply without prompt', false)
     .option('--dry', 'show diff only', false)
     .option('--preset <preset>', 'safe or aggressive', 'safe')
-    .action(async (projectPath, options) => {
-        const preset = normalizePreset(options.preset);
+    .action(async (projectPath, command) => {
+        const options = typeof command?.opts === 'function' ? command.opts() : command;
+        const preset = normalizePreset(readPresetArg(options.preset));
         await runOptimize(projectPath, { auto: Boolean(options.auto), dry: Boolean(options.dry), preset });
     });
 
@@ -73,17 +78,20 @@ program.parseAsync(process.argv).catch((error: Error) => {
     process.exitCode = 1;
 });
 
-async function runAnalyze(projectPath: string): Promise<void> {
+async function runAnalyze(projectPath: string, preset: Preset): Promise<void> {
+    const startedAt = Date.now();
     const project = await loadProject(projectPath);
-    const result = await analyzeProject(project);
+    const result = await analyzeProject(project, preset);
 
     console.log(title(pkg.version));
     for (const line of printProject(project)) {
         console.log(line);
     }
+    console.log(`${chalk.green('✔')} Found ${project.sourceFileCount} source files.`);
+    console.log(`${chalk.green('✔')} Analyze preset: ${chalk.dim(preset)}`);
     console.log(chalk.cyan('Scanning build configuration...'));
     console.log('');
-    for (const line of printAnalysis(result)) {
+    for (const line of printAnalysis(result, Date.now() - startedAt)) {
         console.log(line);
     }
 }
@@ -299,6 +307,15 @@ function normalizePreset(value: string): Preset {
     }
 
     throw new Error(`Invalid preset "${value}". Use safe or aggressive.`);
+}
+
+function readPresetArg(fallback: string): string {
+    const index = process.argv.indexOf('--preset');
+    if (index >= 0 && process.argv[index + 1]) {
+        return process.argv[index + 1];
+    }
+
+    return fallback;
 }
 
 async function confirmProceed(): Promise<boolean> {
