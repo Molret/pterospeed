@@ -9,8 +9,9 @@ import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import pkg from '../package.json';
 import { analyzeProject, optimizeProject, revertProject } from './analyze';
+import { buildReportData, buildReportUrl, detectPanelUrl, runAudit } from './audit';
 import { loadProject } from './project';
-import { printAnalysis, printBenchmark, printDiff, printOptimize, printProject, title } from './ui';
+import { printAnalysis, printAudit, printBenchmark, printDiff, printOptimize, printProject, title } from './ui';
 import type { BenchmarkResult, Preset, ProjectContext } from './types';
 
 const program = new Command();
@@ -56,6 +57,16 @@ program
     .argument('[path]', 'project path', '.')
     .action(async (projectPath) => {
         await runRevert(projectPath);
+    });
+
+program
+    .command('audit')
+    .argument('[url]', 'panel URL to audit (auto-detected from .env if omitted)')
+    .option('--path <path>', 'project path for .env auto-detection', '.')
+    .option('--strategy <strategy>', 'mobile, desktop, or both', 'desktop')
+    .option('--key <key>', 'Google PageSpeed API key (or set PAGESPEED_KEY env var)')
+    .action(async (url, options) => {
+        await runAuditCmd(url, options);
     });
 
 program.parseAsync(process.argv).catch((error: Error) => {
@@ -229,6 +240,64 @@ async function clearWebpackCache(project: ProjectContext): Promise<void> {
             await fs.remove(candidate);
         }
     }
+}
+
+async function runAuditCmd(
+    urlArg: string | undefined,
+    options: { path: string; strategy: string; key?: string },
+): Promise<void> {
+    console.log(title(pkg.version));
+
+    const rootDir = path.resolve(options.path);
+    let url = urlArg;
+
+    if (!url) {
+        console.log(chalk.cyan('Auto-detecting panel URL from .env...'));
+        url = await detectPanelUrl(rootDir);
+        if (!url) {
+            throw new Error(
+                'No URL provided and APP_URL not found in .env.\n' +
+                'Usage: pterospeed audit https://panel.yourhost.com',
+            );
+        }
+        console.log(`${chalk.green('✔')} Found APP_URL: ${chalk.dim(url)}`);
+    }
+
+    const strategy = options.strategy === 'both' ? 'both'
+        : options.strategy === 'mobile' ? 'mobile'
+        : 'desktop';
+
+    const apiKey = options.key ?? process.env['PAGESPEED_KEY'];
+
+    console.log('');
+    console.log(chalk.cyan(`Running PageSpeed audit (${strategy})...`));
+    console.log(chalk.dim('  This may take 10-30 seconds.'));
+    console.log('');
+
+    const results = await runAudit(url, { strategy, apiKey });
+
+    for (const line of printAudit(results)) {
+        console.log(line);
+    }
+
+    // Build report URL
+    const projectName = await detectProjectName(rootDir);
+    const reportData = buildReportData(projectName, results[0]);
+    const reportUrl = buildReportUrl(reportData);
+
+    console.log('');
+    console.log(chalk.dim(`Full report → ${chalk.white(reportUrl)}`));
+}
+
+async function detectProjectName(rootDir: string): Promise<string> {
+    try {
+        const pkgPath = path.join(rootDir, 'package.json');
+        if (await fs.pathExists(pkgPath)) {
+            const p = await fs.readJson(pkgPath);
+            if (p?.name) return String(p.name);
+        }
+    } catch {}
+    return 'pterodactyl-panel';
 }
 
 function normalizePreset(value: string): Preset {

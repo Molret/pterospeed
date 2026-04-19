@@ -1,7 +1,7 @@
 import boxen from 'boxen';
 import chalk from 'chalk';
 import path from 'node:path';
-import type { AnalysisResult, BenchmarkResult, Finding, OptimizeResult, ProjectContext } from './types';
+import type { AnalysisResult, AuditResult, BenchmarkResult, Finding, OptimizeResult, ProjectContext } from './types';
 
 const GITHUB_URL = 'https://github.com/Molret/pterospeed';
 
@@ -189,4 +189,58 @@ function formatMs(ms: number): string {
 
 export function printFindingList(findings: Finding[]): string[] {
     return findings.map((finding) => `${finding.ok ? chalk.green('✓') : chalk.yellow('⚠')} ${finding.title}`);
+}
+
+export function printAudit(results: AuditResult[], reportUrl?: string): string[] {
+    const lines: string[] = [];
+
+    for (const result of results) {
+        lines.push(`${chalk.green('✔')} ${chalk.dim(result.strategy.toUpperCase())} — ${chalk.dim(result.url)}`);
+        lines.push('');
+
+        const { performance: perf, accessibility: a11y, bestPractices: bp, seo } = result.scores;
+
+        const scoreRow = (label: string, score: number): string => {
+            const color = score >= 90 ? chalk.green : score >= 50 ? chalk.yellow : chalk.red;
+            const bar = buildBar(score, 20);
+            return `  ${chalk.dim(label.padEnd(18))} ${color(bar)} ${color(String(score).padStart(3))}/100`;
+        };
+
+        lines.push(scoreRow('Performance', perf));
+        lines.push(scoreRow('Accessibility', a11y));
+        lines.push(scoreRow('Best Practices', bp));
+        lines.push(scoreRow('SEO', seo));
+
+        if (result.audits.length) {
+            lines.push('');
+            lines.push(chalk.dim('  Issues found:'));
+            for (const audit of result.audits) {
+                const icon = audit.score === 0 ? chalk.red('✗') : chalk.yellow('⚠');
+                const val = audit.value ? chalk.dim(` — ${audit.value}`) : '';
+                lines.push(`  ${icon} ${audit.title}${val}`);
+            }
+        } else {
+            lines.push('');
+            lines.push(chalk.green('  ✓ No major issues found.'));
+        }
+
+        lines.push('');
+    }
+
+    if (reportUrl) {
+        lines.push(
+            boxen(
+                [
+                    `${chalk.bold.cyan('Panel audit complete!')}`,
+                    '',
+                    `${chalk.dim('View full report →')} ${chalk.white(reportUrl)}`,
+                    chalk.dim(`\nRun ${chalk.white('pterospeed optimize')} to fix build performance too.`),
+                    `\n${chalk.yellow('⭐')} Helped you? Star us → ${chalk.cyan(GITHUB_URL)}`,
+                ].join('\n'),
+                { padding: 1, borderStyle: 'round', borderColor: 'cyan' },
+            ),
+        );
+    }
+
+    return lines;
 }

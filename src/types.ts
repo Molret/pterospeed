@@ -63,3 +63,39 @@ export interface BenchmarkRun {
 export interface BenchmarkResult {
     runs: BenchmarkRun[];
 }
+
+export interface AuditItem {
+    id: string;
+    title: string;
+    score: number | null;
+    value?: string;
+}
+
+export interface AuditScores {
+    performance: number;
+    accessibility: number;
+    bestPractices: number;
+    seo: number;
+}
+
+export interface AuditResult {
+    url: string;
+    strategy: 'mobile' | 'desktop';
+    scores: AuditScores;
+    audits: AuditItem[];
+    fetchTime: string;
+}
+
+export interface ReportData {
+    v: 1;
+    project: string;
+    url: string;
+    ts: number;
+    audit?: AuditResult;
+    build?: { score: number; applied: number };
+}
+
+export interface AuditOptions {
+    strategy: 'mobile' | 'desktop' | 'both';
+    apiKey?: string;
+}
