@@ -6,7 +6,8 @@ export type FindingId =
     | 'source-map-loader-exclude'
     | 'parallelism'
     | 'terser-minifier'
-    | 'always-minimize';
+    | 'always-minimize'
+    | 'esbuild-transpile';
 
 export interface ProjectContext {
     rootDir: string;

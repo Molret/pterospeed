@@ -42,6 +42,10 @@ function computeEstimatedGain(findings: Finding[]): string {
     const notOk = (id: string) => findings.some((f) => f.id === id && !f.ok);
     const parts: string[] = [];
 
+    if (notOk('esbuild-transpile')) {
+        parts.push('TypeScript transpilation ~10-20x faster cold (esbuild-loader vs Babel)');
+    }
+
     if (notOk('terser-minifier')) {
         parts.push('production minification ~3-4x faster (esbuild vs Terser)');
     }
@@ -83,6 +87,7 @@ export async function analyzeProject(project: ProjectContext): Promise<AnalysisR
     findings.push(checkParallelism(bundle.configObject));
     findings.push(checkTerserMinifier(bundle.configObject));
     findings.push(checkAlwaysMinimize(bundle.configObject));
+    findings.push(checkEsbuildTranspile(bundle.configObject));
 
     const penalties = findings.reduce((sum, finding) => {
         if (finding.ok) {
@@ -125,11 +130,23 @@ export async function optimizeProject(project: ProjectContext, options: Optimize
         applied.push('Changed minimize: true → minimize: isProduction (skips minification in dev).');
     }
 
-    const babelResult = ensureBabelLoaderCache(bundle.configObject);
-    if (babelResult === 'changed') {
-        applied.push('Enabled babel-loader disk cache.');
-    } else if (babelResult === 'skipped') {
-        skipped.push('Could not patch babel-loader options shape safely.');
+    // Aggressive: replace babel-loader entirely — skip babel cache step
+    let esbuildLoaderApplied = false;
+    if (options.preset === 'aggressive') {
+        esbuildLoaderApplied = ensureEsbuildLoader(bundle.configObject);
+        if (esbuildLoaderApplied) {
+            applied.push('Replaced babel-loader with esbuild-loader for TypeScript transpilation.');
+            needsInstall = true;
+        }
+    }
+
+    if (!esbuildLoaderApplied) {
+        const babelResult = ensureBabelLoaderCache(bundle.configObject);
+        if (babelResult === 'changed') {
+            applied.push('Enabled babel-loader disk cache.');
+        } else if (babelResult === 'skipped') {
+            skipped.push('Could not patch babel-loader options shape safely.');
+        }
     }
 
     if (ensureSourceMapLoaderExclude(bundle.configObject)) {
@@ -141,6 +158,7 @@ export async function optimizeProject(project: ProjectContext, options: Optimize
     }
 
     if (options.preset === 'aggressive') {
+
         const esbuildResult = ensureEsbuildMinifier(bundle.ast, bundle.configObject);
         if (esbuildResult.changed) {
             applied.push('Replaced TerserPlugin with EsbuildPlugin.');
@@ -222,6 +240,10 @@ export async function optimizeProject(project: ProjectContext, options: Optimize
 function buildGainSummary(applied: string[]): string[] {
     const summary: string[] = [];
     const has = (substr: string) => applied.some((a) => a.includes(substr));
+
+    if (has('esbuild-loader')) {
+        summary.push('TypeScript transpilation: ~10-20x faster (esbuild-loader vs Babel)');
+    }
 
     if (has('EsbuildPlugin')) {
         summary.push('Production minification: ~3-4x faster (esbuild vs Terser)');
@@ -515,6 +537,57 @@ function checkAlwaysMinimize(configObject: any): Finding {
         fixable: true,
         ok: true,
     };
+}
+
+function checkEsbuildTranspile(configObject: any): Finding {
+    const babelRule = findRuleByLoader(configObject, 'babel-loader');
+    const esbuildRule = findRuleByLoader(configObject, 'esbuild-loader');
+
+    if (!babelRule) {
+        return {
+            id: 'esbuild-transpile',
+            title: esbuildRule ? 'esbuild-loader already transpiling TypeScript' : 'babel-loader not detected',
+            detail: esbuildRule
+                ? 'TypeScript transpilation already uses esbuild — no change needed.'
+                : 'No babel-loader rule found.',
+            impact: 'high',
+            fixable: false,
+            ok: true,
+        };
+    }
+
+    return {
+        id: 'esbuild-transpile',
+        title: 'babel-loader transpiling TypeScript (slow)',
+        detail: 'esbuild transpiles TS/TSX 10-20x faster than Babel. Aggressive preset replaces it automatically.',
+        impact: 'high',
+        fixable: true,
+        ok: false,
+    };
+}
+
+function ensureEsbuildLoader(configObject: any): boolean {
+    const rule = findRuleByLoader(configObject, 'babel-loader');
+    if (!rule) return false;
+
+    // Already replaced
+    if (findRuleByLoader(configObject, 'esbuild-loader')) return false;
+
+    const loaderProp = getObjectProperty(rule, 'loader');
+    if (loaderProp && n.StringLiteral.check(loaderProp.value)) {
+        loaderProp.value = b.stringLiteral('esbuild-loader');
+    }
+
+    // Wipe old babel options, set esbuild ones
+    const optionsProp = getObjectProperty(rule, 'options');
+    const newOptions = parseObjectExpression("{ target: 'es2015' }");
+    if (optionsProp) {
+        optionsProp.value = newOptions;
+    } else {
+        rule.properties.push(b.objectProperty(b.identifier('options'), newOptions));
+    }
+
+    return true;
 }
 
 function ensureFilesystemCache(configObject: any, webpackMajor: number): boolean {
