@@ -138,13 +138,18 @@ async function runOptimize(
             dryRun: false,
             preset: options.preset,
         });
-        for (const line of printOptimize(applied, project)) {
+        const share = await buildOptimizeShare(project, applied, options.preset);
+        for (const line of printOptimize(applied, project, share)) {
             console.log(line);
         }
         return;
     }
 
-    for (const line of printOptimize(result, project)) {
+    const share =
+        options.auto && !options.dry && result.changedFiles.length
+            ? await buildOptimizeShare(project, result, options.preset)
+            : undefined;
+    for (const line of printOptimize(result, project, share)) {
         console.log(line);
     }
 }
@@ -181,6 +186,7 @@ async function benchmarkProject(project: ProjectContext): Promise<BenchmarkResul
     const devScript = getScriptName(project, 'build');
     const prodScript = getScriptName(project, 'build:production');
 
+    await preflightBenchmark(project);
     await clearWebpackCache(project);
     runs.push(await runScript(project, 'Cold dev build', devScript));
     runs.push(await runScript(project, 'Warm dev build', devScript));
@@ -227,7 +233,7 @@ async function runScript(project: ProjectContext, label: string, scriptName: str
         });
     } catch (error: any) {
         const stderr = [error?.stdout, error?.stderr].filter(Boolean).join('\n').trim();
-        throw new Error(`Benchmark failed on "${label}". ${stderr || 'Unknown error.'}`);
+        throw new Error(formatBenchmarkFailure(project, label, scriptName, stderr));
     }
 
     return {
@@ -235,6 +241,51 @@ async function runScript(project: ProjectContext, label: string, scriptName: str
         command: `${command} ${args.join(' ')}`,
         durationMs: Date.now() - startedAt,
     };
+}
+
+async function preflightBenchmark(project: ProjectContext): Promise<void> {
+    const source = (await fs.readFile(project.webpackConfigPath, 'utf8').catch(() => '')) || '';
+    if (!source.includes('esbuild-loader')) {
+        return;
+    }
+
+    const dependencyPath = path.join(project.rootDir, 'node_modules', 'esbuild-loader');
+    if (!(await fs.pathExists(dependencyPath))) {
+        throw new Error(
+            `Benchmark blocked: webpack.config.js references "esbuild-loader" but it is not installed.\n` +
+            `Run "${project.packageManager} install" and retry.`,
+        );
+    }
+}
+
+function formatBenchmarkFailure(
+    project: ProjectContext,
+    label: string,
+    scriptName: string,
+    stderr: string,
+): string {
+    const missingModule = stderr.match(/Cannot find module '([^']+)'/);
+    if (missingModule?.[1]) {
+        return (
+            `Benchmark blocked on "${label}": missing module "${missingModule[1]}".\n` +
+            `Run "${project.packageManager} install" in the panel root and retry.`
+        );
+    }
+
+    if (/ERR_OSSL_EVP_UNSUPPORTED|digital envelope routines::unsupported/i.test(stderr)) {
+        const directCmd =
+            project.packageManager === 'yarn'
+                ? `NODE_OPTIONS=--openssl-legacy-provider yarn ${scriptName}`
+                : `NODE_OPTIONS=--openssl-legacy-provider npm run ${scriptName}`;
+        return (
+            `Benchmark failed on "${label}": OpenSSL incompatibility with webpack ${project.webpackMajor} on ${process.version}.\n` +
+            `pterospeed already injects NODE_OPTIONS for webpack 4; if your environment strips it, run:\n` +
+            `${directCmd}`
+        );
+    }
+
+    const excerpt = stderr.split('\n').slice(0, 16).join('\n');
+    return `Benchmark failed on "${label}". ${excerpt || 'Unknown error.'}`;
 }
 
 function buildScriptEnv(project: ProjectContext): NodeJS.ProcessEnv {
@@ -300,6 +351,31 @@ async function runAuditCmd(
 
     for (const line of printAudit(results, reportUrl, reportPath)) {
         console.log(line);
+    }
+}
+
+async function buildOptimizeShare(
+    project: ProjectContext,
+    result: { applied: string[]; changedFiles: string[] },
+    preset: Preset,
+): Promise<{ reportUrl?: string; reportPath?: string } | undefined> {
+    if (!result.changedFiles.length) {
+        return undefined;
+    }
+
+    try {
+        const analyzed = await analyzeProject(project, preset);
+        const projectName = project.packageJson?.name || path.basename(project.rootDir) || 'pterodactyl-panel';
+        const reportData = buildReportData(projectName, undefined, {
+            score: analyzed.score,
+            applied: result.applied.length,
+        });
+        return {
+            reportUrl: buildReportUrl(reportData),
+            reportPath: await writeReportFile(project.rootDir, 'build', reportData),
+        };
+    } catch {
+        return undefined;
     }
 }
 

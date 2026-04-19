@@ -81,7 +81,11 @@ export function printAnalysis(result: AnalysisResult, elapsedMs: number): string
     return lines;
 }
 
-export function printOptimize(result: OptimizeResult, project: ProjectContext): string[] {
+export function printOptimize(
+    result: OptimizeResult,
+    project: ProjectContext,
+    share?: { reportUrl?: string; reportPath?: string },
+): string[] {
     const lines: string[] = [];
 
     if (!result.changedFiles.length) {
@@ -114,6 +118,10 @@ export function printOptimize(result: OptimizeResult, project: ProjectContext): 
         lines.push('');
         const gainLines = result.gainSummary.map((g) => `  ${chalk.green('›')} ${g}`).join('\n');
         const benchmarkHint = chalk.dim(`\nRun ${chalk.white('pterospeed benchmark')} to measure your real gains.`);
+        const shareLines = [
+            share?.reportUrl ? `${chalk.dim('\nShare report →')} ${chalk.white(share.reportUrl)}` : '',
+            share?.reportPath ? `${chalk.dim('\nSaved JSON →')} ${chalk.white(share.reportPath)}` : '',
+        ].filter(Boolean).join('');
         const starLine = `\n${chalk.yellow('⭐')} Helped you? Star us → ${chalk.cyan(GITHUB_URL)}`;
 
         lines.push(
@@ -123,6 +131,7 @@ export function printOptimize(result: OptimizeResult, project: ProjectContext): 
                     '',
                     gainLines,
                     benchmarkHint,
+                    shareLines,
                     starLine,
                 ].join('\n'),
                 { padding: 1, borderStyle: 'round', borderColor: 'green' },
