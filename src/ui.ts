@@ -263,13 +263,13 @@ export function printAudit(results: AuditResult[], reportUrl?: string, reportPat
         lines.push('');
     }
 
-    // Summary boxen
+    // Summary boxen — URLs kept OUTSIDE to prevent box bleeding
     const first = results[0];
-    if (first && (reportUrl || reportPath)) {
+    if (first) {
         const perf = first.scores.performance;
         const perfColor = perf >= 90 ? chalk.green : perf >= 50 ? chalk.yellow : chalk.red;
         const perfLabel = perf >= 90 ? 'Great' : perf >= 50 ? 'Needs work' : 'Critical';
-        const bar = buildBar(perf, 32);
+        const bar = buildBar(perf, 40);
 
         const boxContent = [
             chalk.bold.cyan('Panel audit complete!'),
@@ -277,16 +277,35 @@ export function printAudit(results: AuditResult[], reportUrl?: string, reportPat
             `${chalk.dim('Performance:')} ${perfColor(`${perf} / 100`)}  ${chalk.dim(perfLabel)}`,
             `${perfColor(bar)}`,
             '',
-            reportUrl ? `${chalk.dim('Full report  →')} ${chalk.white(reportUrl)}` : '',
-            reportPath ? chalk.dim(`Local JSON   → ${path.relative(process.cwd(), reportPath)}`) : '',
-            '',
             chalk.dim(`Run ${chalk.white('pterospeed optimize')} to fix build performance too.`),
             `${chalk.yellow('⭐')} Helped you? Star us → ${chalk.cyan(GITHUB_URL)}`,
-        ].filter((l) => l !== undefined).join('\n');
+        ].join('\n');
 
         lines.push(
-            boxen(boxContent, { padding: 1, borderStyle: 'round', borderColor: 'cyan' }),
+            boxen(boxContent, {
+                padding: 1,
+                borderStyle: 'round',
+                borderColor: 'cyan',
+                width: 60,
+            }),
         );
+
+        // URLs outside box — react-doctor style
+        if (reportPath) {
+            lines.push('');
+            lines.push(chalk.dim(`  Full diagnostics written to ${path.relative(process.cwd(), reportPath)}`));
+        }
+        if (reportUrl) {
+            const short = reportUrl.length <= 80;
+            if (short) {
+                lines.push('');
+                lines.push(`  ${chalk.dim('Share your results:')} ${chalk.cyan(reportUrl)}`);
+            } else {
+                lines.push('');
+                lines.push(chalk.dim('  Report too large for short URL — shortener offline.'));
+                lines.push(chalk.dim('  Open the local JSON in a browser via pterospeed.me.'));
+            }
+        }
     }
 
     return lines;

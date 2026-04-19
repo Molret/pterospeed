@@ -4,6 +4,8 @@ import { execa } from 'execa';
 import type { AuditItem, AuditOptions, AuditResult, ReportData } from './types';
 
 const REPORT_BASE_URL = 'https://pterospeed.me/r';
+const SHORTEN_ENDPOINT = 'https://pterospeed.me/api/r';
+const SHORTEN_TIMEOUT_MS = 4000;
 
 export async function detectPanelUrl(rootDir: string): Promise<string | undefined> {
     const envPath = path.join(rootDir, '.env');
@@ -196,6 +198,37 @@ export function encodeReport(data: ReportData): string {
 
 export function buildReportUrl(data: ReportData): string {
     return `${REPORT_BASE_URL}?d=${encodeReport(data)}`;
+}
+
+/**
+ * Attempts to create a short URL via the pterospeed.me API.
+ * Returns the short URL on success, or null on any failure (network,
+ * timeout, non-2xx). Callers should fall back to buildReportUrl().
+ */
+export async function shortenReport(data: ReportData): Promise<string | null> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SHORTEN_TIMEOUT_MS);
+
+    try {
+        const res = await fetch(SHORTEN_ENDPOINT, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ data }),
+            signal: controller.signal,
+        });
+        if (!res.ok) return null;
+
+        const payload = (await res.json().catch(() => null)) as { id?: string; url?: string } | null;
+        if (!payload) return null;
+
+        if (payload.url) return payload.url;
+        if (payload.id) return `${REPORT_BASE_URL}/${payload.id}`;
+        return null;
+    } catch {
+        return null;
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 export async function writeReportFile(rootDir: string, kind: string, data: ReportData): Promise<string> {

@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import pkg from '../package.json';
 import { analyzeProject, optimizeProject, revertProject } from './analyze';
-import { buildReportData, buildReportUrl, detectPanelUrl, runAudit, writeReportFile } from './audit';
+import { buildReportData, buildReportUrl, detectPanelUrl, runAudit, shortenReport, writeReportFile } from './audit';
 import { loadProject } from './project';
 import { printAnalysis, printAudit, printBenchmark, printDiff, printOptimize, printProject, title } from './ui';
 import type { AuditResult, BenchmarkResult, Preset, ProjectContext } from './types';
@@ -71,6 +71,22 @@ program
     .option('--strategy <strategy>', 'mobile, desktop, or both', 'desktop')
     .action(async (url, options) => {
         await runAuditCmd(url, options);
+    });
+
+program
+    .command('full')
+    .description('Run build analysis + site audit in one unified report.')
+    .argument('[path]', 'project path', '.')
+    .option('--strategy <strategy>', 'mobile, desktop, or both', 'desktop')
+    .option('--preset <preset>', 'safe or aggressive', 'safe')
+    .option('--skip-audit', 'skip the Lighthouse site audit', false)
+    .action(async (projectPath, command) => {
+        const options = typeof command?.opts === 'function' ? command.opts() : command;
+        await runFull(projectPath, {
+            strategy: String(options.strategy || 'desktop'),
+            preset: normalizePreset(readPresetArg(options.preset)),
+            skipAudit: Boolean(options.skipAudit),
+        });
     });
 
 program.parseAsync(process.argv).catch((error: Error) => {
@@ -312,6 +328,115 @@ async function clearWebpackCache(project: ProjectContext): Promise<void> {
     }
 }
 
+async function runFull(
+    projectPath: string,
+    options: { strategy: string; preset: Preset; skipAudit: boolean },
+): Promise<void> {
+    const { default: ora } = await import('ora');
+    const startedAt = Date.now();
+
+    console.log(title(pkg.version));
+    console.log('');
+
+    // Step 1: Load project
+    const loadSpinner = ora('Loading project…').start();
+    const project = await loadProject(projectPath);
+    loadSpinner.succeed(
+        `Detected: ${project.isPterodactyl ? chalk.cyan('Pterodactyl Panel') : chalk.dim('webpack project')}`,
+    );
+    console.log(`${chalk.green('✔')} Root:        ${chalk.dim(project.rootDir)}`);
+    console.log(`${chalk.green('✔')} Config:      ${chalk.dim(project.webpackConfigPath)}`);
+    console.log(`${chalk.green('✔')} Webpack:     ${chalk.dim(`v${project.webpackMajor}.x`)}`);
+    console.log(`${chalk.green('✔')} Source files: ${chalk.dim(String(project.sourceFileCount))}`);
+    console.log(`${chalk.green('✔')} Preset:      ${chalk.dim(options.preset)}`);
+    console.log('');
+
+    // Step 2: Analyze webpack config
+    const analyzeSpinner = ora('Scanning webpack configuration…').start();
+    const analysis = await analyzeProject(project, options.preset);
+    const scoreColor =
+        analysis.score >= 90 ? chalk.green
+        : analysis.score >= 70 ? chalk.yellow
+        : chalk.red;
+    analyzeSpinner.succeed(`Build configuration scanned — ${scoreColor(`${analysis.score}/100`)}`);
+    console.log('');
+
+    // Step 3: Site audit (optional)
+    let audit: AuditResult | undefined;
+    let auditUrl: string | undefined;
+    if (!options.skipAudit) {
+        const detectSpinner = ora('Detecting panel URL from .env…').start();
+        auditUrl = await detectPanelUrl(project.rootDir);
+        if (auditUrl) {
+            detectSpinner.succeed(`Panel URL: ${chalk.dim(auditUrl)}`);
+
+            const strategy = options.strategy === 'both' ? 'both'
+                : options.strategy === 'mobile' ? 'mobile'
+                : 'desktop';
+
+            const auditSpinner = ora({
+                text: `Running Lighthouse audit (${strategy}) — may take 1–3 minutes…`,
+                color: 'cyan',
+            }).start();
+            const auditStart = Date.now();
+            const ticker = setInterval(() => {
+                const secs = Math.round((Date.now() - auditStart) / 1000);
+                auditSpinner.text = `Running Lighthouse audit (${strategy}) — ${secs}s elapsed…`;
+            }, 3000);
+
+            try {
+                const results = await runAudit(auditUrl, { strategy, rootDir: project.rootDir });
+                audit = results[0];
+                clearInterval(ticker);
+                auditSpinner.succeed(
+                    `Audit complete ${chalk.dim(`(${formatElapsed(Date.now() - auditStart)})`)}`,
+                );
+            } catch (err: any) {
+                clearInterval(ticker);
+                auditSpinner.fail(`Audit failed: ${err.message}`);
+            }
+        } else {
+            detectSpinner.warn('No APP_URL in .env — skipping site audit.');
+        }
+    }
+
+    console.log('');
+
+    // Step 4: Build unified report
+    const projectName = project.packageJson?.name || 'pterodactyl-panel';
+    const reportData = buildReportData(projectName, audit, {
+        score: analysis.score,
+        applied: 0,
+    });
+    const reportPath = await writeReportFile(project.rootDir, 'full', reportData);
+
+    const shortSpinner = ora('Generating shareable link…').start();
+    const shortUrl = await shortenReport(reportData);
+    if (shortUrl) {
+        shortSpinner.succeed(`Shareable link ready: ${chalk.cyan(shortUrl)}`);
+    } else {
+        shortSpinner.warn('Shortener offline — report saved locally.');
+    }
+    console.log('');
+
+    // Step 5: Print both analyses
+    for (const line of printProject(project)) {
+        console.log(line);
+    }
+    console.log('');
+    for (const line of printAnalysis(analysis, Date.now() - startedAt)) {
+        console.log(line);
+    }
+    console.log('');
+
+    if (audit) {
+        const reportUrl = shortUrl ?? buildReportUrl(reportData);
+        for (const line of printAudit([audit], reportUrl, reportPath)) {
+            console.log(line);
+        }
+    }
+}
+
 async function runAuditCmd(
     urlArg: string | undefined,
     options: { path: string; strategy: string },
@@ -373,11 +498,21 @@ async function runAuditCmd(
     auditSpinner.succeed(`Audit complete ${chalk.dim(`(${elapsed})`)}`);
     console.log('');
 
-    // Step 4: Generate report + print
+    // Step 4: Generate report + try shortener
     const projectName = await detectProjectName(rootDir);
     const reportData = buildReportData(projectName, results[0]);
-    const reportUrl = buildReportUrl(reportData);
     const reportPath = await writeReportFile(rootDir, 'audit', reportData);
+
+    const shortSpinner = ora('Generating shareable link…').start();
+    const shortUrl = await shortenReport(reportData);
+    if (shortUrl) {
+        shortSpinner.succeed(`Shareable link ready: ${chalk.cyan(shortUrl)}`);
+    } else {
+        shortSpinner.warn('Shortener offline — report saved locally.');
+    }
+    console.log('');
+
+    const reportUrl = shortUrl ?? buildReportUrl(reportData);
 
     for (const line of printAudit(results, reportUrl, reportPath)) {
         console.log(line);
